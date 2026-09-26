@@ -163,8 +163,10 @@ export async function POST(req: NextRequest) {
       userName ? `User's name is ${userName}.` : "",
     ].filter(Boolean).join(" ");
 
+    const model = process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-20241022";
+
     const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model,
       max_tokens: 400,
       system: CHARLOTTE_SYSTEM + (contextNote ? `\n\nCONTEXT: ${contextNote}` : ""),
       messages: messages.map((m: { role: string; content: string }) => ({

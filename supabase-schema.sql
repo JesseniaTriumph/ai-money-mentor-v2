@@ -110,3 +110,24 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
+
+-- ── INCREMENT XP & AUTO-CALCULATE LEVEL ──
+CREATE OR REPLACE FUNCTION increment_xp(uid UUID, amount INT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  UPDATE profiles
+  SET total_xp = COALESCE(total_xp, 0) + amount,
+      current_level = CASE
+        WHEN (COALESCE(total_xp, 0) + amount) >= 4000 THEN 6
+        WHEN (COALESCE(total_xp, 0) + amount) >= 2000 THEN 5
+        WHEN (COALESCE(total_xp, 0) + amount) >= 1000 THEN 4
+        WHEN (COALESCE(total_xp, 0) + amount) >= 500  THEN 3
+        WHEN (COALESCE(total_xp, 0) + amount) >= 200  THEN 2
+        ELSE 1
+      END,
+      last_active = CURRENT_DATE,
+      updated_at = NOW()
+  WHERE id = uid;
+END;
+$$;
+

@@ -315,11 +315,20 @@ function ApiNote({ api, description, url }: { api: string; description: string; 
   );
 }
 
-function QuizWidget({ sectionKey }: { sectionKey: string }) {
+function QuizWidget({ sectionKey, onEarnXP }: { sectionKey: string; onEarnXP?: (xp: number, sectionKey: string) => void }) {
   const questions = QUIZ_BANK[sectionKey];
   const q = questions?.[0];
   const [selected, setSelected] = useState<number | null>(null);
   if (!q) return null;
+
+  const handleSelect = (i: number) => {
+    if (selected !== null) return;
+    setSelected(i);
+    if (i === q.correct && onEarnXP) {
+      onEarnXP(q.xp, sectionKey);
+    }
+  };
+
   return (
     <div style={{ background: `linear-gradient(135deg, rgba(201,169,78,0.12), rgba(201,169,78,0.04))`, border: `2px solid ${C.gold}`, borderRadius: 16, padding: 16, marginBottom: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -337,7 +346,7 @@ function QuizWidget({ sectionKey }: { sectionKey: string }) {
             else if (isSelected) { bg = "#fff0f0"; border = "1px solid #d44"; color = "#d44"; }
           }
           return (
-            <button key={i} onClick={() => selected === null && setSelected(i)} disabled={selected !== null}
+            <button key={i} onClick={() => handleSelect(i)} disabled={selected !== null}
               style={{ padding: "9px 12px", background: bg, border, borderRadius: 10, fontSize: 13, cursor: selected === null ? "pointer" : "default", textAlign: "left", fontFamily: "DM Sans, sans-serif", color, transition: "all 0.2s" }}>
               {opt}
             </button>
@@ -363,7 +372,7 @@ function QuizWidget({ sectionKey }: { sectionKey: string }) {
 /* ─────────────── TAB CONTENT ─────────────── */
 
 /* Guest landing auth card — shown in hero when no user is signed in */
-function GuestAuthCard({ onAuthSuccess }: { onAuthSuccess: (id: string, name: string) => void }) {
+function GuestAuthCard({ onAuthSuccess }: { onAuthSuccess: (id: string, name: string, email: string) => void }) {
   const supabase = createClient();
   const [siEmail, setSiEmail] = useState("");
   const [siPassword, setSiPassword] = useState("");
@@ -389,7 +398,7 @@ function GuestAuthCard({ onAuthSuccess }: { onAuthSuccess: (id: string, name: st
     setLoading(false);
     if (e) { setError(e.message); return; }
     const name = data.user?.user_metadata?.full_name || data.user?.email?.split("@")[0] || "there";
-    onAuthSuccess(data.user?.id ?? "", name);
+    onAuthSuccess(data.user?.id ?? "", name, data.user?.email ?? siEmail);
   };
 
   const handleSignUp = async () => {
@@ -402,7 +411,7 @@ function GuestAuthCard({ onAuthSuccess }: { onAuthSuccess: (id: string, name: st
     setLoading(false);
     if (e) { setError(e.message); return; }
     const name = suName || data.user?.email?.split("@")[0] || "there";
-    onAuthSuccess(data.user?.id ?? "", name);
+    onAuthSuccess(data.user?.id ?? "", name, data.user?.email ?? suEmail);
   };
 
   return (
@@ -446,7 +455,7 @@ function HomeTab({ onNavigate, userName, isLoggedIn, onAuthSuccess, userXP, budg
   onNavigate: (id: SectionId) => void;
   userName?: string;
   isLoggedIn: boolean;
-  onAuthSuccess: (id: string, name: string) => void;
+  onAuthSuccess: (id: string, name: string, email: string) => void;
   userXP: number;
   budgetSpent: number;
   budgetTotal: number;
@@ -561,54 +570,123 @@ function HomeTab({ onNavigate, userName, isLoggedIn, onAuthSuccess, userXP, budg
   );
 }
 
-function BudgetTab({ isLoggedIn, onAuthSuccess }: { isLoggedIn: boolean; onAuthSuccess: (id: string, name: string) => void }) {
-  /* ── GUEST STATE ─────────────────────────────────────────────────────── */
-  if (!isLoggedIn) {
-    return (
-      <div>
-        <div style={{ background: `linear-gradient(160deg, ${C.forestDeep} 0%, ${C.forest} 60%, ${C.forestMid} 100%)`, display: "flex", alignItems: "stretch", overflow: "hidden", position: "relative", minHeight: 380 }}>
-          <div style={{ position: "absolute", top: -40, left: -40, width: 200, height: 200, borderRadius: "50%", background: "radial-gradient(circle, rgba(201,169,78,0.08) 0%, transparent 70%)", pointerEvents: "none" }} />
-          <div style={{ flex: 1, padding: "20px 16px", display: "flex", alignItems: "center", gap: 16, minWidth: 0 }}>
-            <div style={{ flexShrink: 0 }}>
-              <CharlotteAvatar state="greeting" size={88} showBubble={true} message="Sign in to build your budget! 💚" />
-            </div>
-            <GuestAuthCard onAuthSuccess={onAuthSuccess} />
-          </div>
-        </div>
-      </div>
-    );
-  }
+type BudgetItem = { cat: string; spent: number; total: number; color: string };
 
-  const total = BUDGET_ITEMS.reduce((s, i) => s + i.spent, 0);
-  const budgetTotal = BUDGET_ITEMS.reduce((s, i) => s + i.total, 0);
+const INITIAL_BUDGET_ITEMS: BudgetItem[] = [
+  { cat: "Housing (Rent / Mortgage)", spent: 1100, total: 1250, color: C.forest },
+  { cat: "Food & Groceries", spent: 340, total: 450, color: C.gold },
+  { cat: "Transportation & Gas", spent: 120, total: 200, color: C.forestMid },
+  { cat: "Utilities & Phone", spent: 140, total: 180, color: C.sageDark },
+  { cat: "Savings & Debt Payoff", spent: 150, total: 300, color: C.blue },
+  { cat: "Personal & Wants", spent: 90, total: 180, color: "#7b2fbe" },
+];
+
+function BudgetTab({ isLoggedIn, onAuthSuccess, onEarnXP }: {
+  isLoggedIn: boolean;
+  onAuthSuccess: (id: string, name: string, email: string) => void;
+  onEarnXP?: (xp: number, sectionKey: string) => void;
+}) {
+  const [items, setItems] = useState<BudgetItem[]>(INITIAL_BUDGET_ITEMS);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editSpent, setEditSpent] = useState("");
+  const [editTotal, setEditTotal] = useState("");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("aimm_budget_items");
+      if (saved) setItems(JSON.parse(saved));
+    } catch { /* ignore parse error */ }
+  }, []);
+
+  const saveItems = (newItems: BudgetItem[]) => {
+    setItems(newItems);
+    try {
+      localStorage.setItem("aimm_budget_items", JSON.stringify(newItems));
+    } catch { /* ignore storage error */ }
+  };
+
+  const startEdit = (idx: number) => {
+    setEditingIdx(idx);
+    setEditSpent(String(items[idx].spent));
+    setEditTotal(String(items[idx].total));
+  };
+
+  const saveEdit = (idx: number) => {
+    const updated = [...items];
+    updated[idx] = {
+      ...updated[idx],
+      spent: parseFloat(editSpent) || 0,
+      total: parseFloat(editTotal) || 0,
+    };
+    saveItems(updated);
+    setEditingIdx(null);
+  };
+
+  const total = items.reduce((s, i) => s + i.spent, 0);
+  const budgetTotal = items.reduce((s, i) => s + i.total, 0);
+  const remaining = budgetTotal - total;
+
   return (
     <div>
       <HeroSection title="Budget Builder" subtitle="Your Monthly Plan" icon="budget">
         {budgetTotal > 0 ? (
-          <div style={{ color: C.sageMid, fontSize: 13 }}>Spent: <strong style={{ color: C.goldLight }}>${total}</strong> of ${budgetTotal}</div>
+          <div style={{ color: C.sageMid, fontSize: 13 }}>
+            Spent: <strong style={{ color: C.goldLight }}>${total}</strong> of ${budgetTotal}
+          </div>
         ) : (
           <div style={{ color: C.sageMid, fontSize: 13 }}>Set up your budget to get started</div>
         )}
       </HeroSection>
       <div style={{ padding: "18px 18px 0" }}>
-        <SectionTitle>Spending Breakdown</SectionTitle>
-        {BUDGET_ITEMS.map(item => (
-          <div key={item.cat} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 11, marginBottom: 7 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 11, height: 11, borderRadius: "50%", background: item.color, flexShrink: 0 }} />
-              <div style={{ fontSize: 13, fontWeight: 500 }}>{item.cat}</div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.forest }}>${item.spent}</div>
-              <div style={{ fontSize: 11, color: C.textMuted }}>of ${item.total}</div>
-            </div>
+        {!isLoggedIn && (
+          <div style={{ background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, fontSize: 12 }}>
+            <span style={{ color: C.textLight }}>💡 <strong>Guest Mode:</strong> Your budget is stored locally in this browser.</span>
+          </div>
+        )}
+
+        <SectionTitle>Spending Breakdown (Click any item to edit)</SectionTitle>
+        {items.map((item, idx) => (
+          <div key={item.cat} style={{ background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", marginBottom: 8 }}>
+            {editingIdx === idx ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 600, fontSize: 13, flex: 1, minWidth: 150 }}>{item.cat}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 11, color: C.textMuted }}>Spent: $</span>
+                  <input type="number" value={editSpent} onChange={e => setEditSpent(e.target.value)}
+                    style={{ width: 70, padding: "5px 7px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12 }} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 11, color: C.textMuted }}>Limit: $</span>
+                  <input type="number" value={editTotal} onChange={e => setEditTotal(e.target.value)}
+                    style={{ width: 70, padding: "5px 7px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12 }} />
+                </div>
+                <button onClick={() => saveEdit(idx)} style={{ background: C.forest, color: "white", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Save</button>
+                <button onClick={() => setEditingIdx(null)} style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", fontSize: 12 }}>✕</button>
+              </div>
+            ) : (
+              <div onClick={() => startEdit(idx)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 11, height: 11, borderRadius: "50%", background: item.color, flexShrink: 0 }} />
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{item.cat}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.forest }}>${item.spent}</div>
+                  <div style={{ fontSize: 11, color: C.textMuted }}>of ${item.total} <span style={{ color: C.gold, fontSize: 10 }}>✏️</span></div>
+                </div>
+              </div>
+            )}
           </div>
         ))}
+
         <div style={{ background: C.forestDeep, borderRadius: 11, padding: "13px 15px", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <div style={{ color: C.sageMid, fontSize: 13 }}>Remaining from ${budgetTotal}</div>
-          <div style={{ color: C.goldLight, fontSize: 18, fontWeight: 700, fontFamily: "'Playfair Display', serif" }}>${budgetTotal - total}</div>
+          <div style={{ color: remaining >= 0 ? C.goldLight : "#f87171", fontSize: 18, fontWeight: 700, fontFamily: "'Playfair Display', serif" }}>
+            ${remaining}
+          </div>
         </div>
-        <QuizWidget sectionKey="budget" />
+
+        <QuizWidget sectionKey="budget" onEarnXP={onEarnXP} />
+
         <CharlotteTip>
           Try the <strong style={{ color: "white" }}>50/30/20 rule</strong>: 50% for needs (rent, food, transport), 30% for wants, 20% for savings & debt. 🥧
         </CharlotteTip>
@@ -617,7 +695,7 @@ function BudgetTab({ isLoggedIn, onAuthSuccess }: { isLoggedIn: boolean; onAuthS
   );
 }
 
-function LearnTab({ userXP }: { userXP: number }) {
+function LearnTab({ userXP, onEarnXP }: { userXP: number; onEarnXP?: (xp: number, sectionKey: string) => void }) {
   const currentLevelIdx = Math.max(0, CURRICULUM.findIndex(l => l.xp > userXP) - 1);
   const currentLevel = CURRICULUM[currentLevelIdx];
 
@@ -631,7 +709,7 @@ function LearnTab({ userXP }: { userXP: number }) {
       </HeroSection>
       <div style={{ padding: "18px 18px 0" }}>
         <SectionTitle>🎯 Daily Quiz Challenge</SectionTitle>
-        <QuizWidget sectionKey="budget" />
+        <QuizWidget sectionKey="budget" onEarnXP={onEarnXP} />
 
         <SectionTitle>🗺️ Your Learning Path</SectionTitle>
         {CURRICULUM.map((lvl, idx) => {
@@ -731,12 +809,13 @@ function ProgressTab({ userXP, streak, badgeCount, userName }: { userXP: number;
 }
 
 /* ─── LIFE GOAL SECTION TEMPLATE ─── */
-function GoalSection({ icon, title, intro, tips, quizKey, apis, curriculum }: {
+function GoalSection({ icon, title, intro, tips, quizKey, apis, curriculum, onEarnXP }: {
   icon: string; title: string; intro: string;
   tips: string[];
   quizKey?: string;
   apis?: { api: string; description: string; url: string }[];
   curriculum?: string[];
+  onEarnXP?: (xp: number, sectionKey: string) => void;
 }) {
   return (
     <div>
@@ -745,7 +824,7 @@ function GoalSection({ icon, title, intro, tips, quizKey, apis, curriculum }: {
         <Card style={{ background: "#f7fdf2", borderColor: C.sageDark }}>
           <p style={{ fontSize: 13.5, color: C.text, lineHeight: 1.6 }}>{intro}</p>
         </Card>
-        {quizKey && <QuizWidget sectionKey={quizKey} />}
+        {quizKey && <QuizWidget sectionKey={quizKey} onEarnXP={onEarnXP} />}
         <CharlotteTip>
           <strong style={{ color: "white" }}>Charlotte asks:</strong> {tips[0]}
         </CharlotteTip>
@@ -879,7 +958,7 @@ function renderSection(
   activeSection: SectionId,
   isLoggedIn: boolean,
   userName?: string,
-  onAuthSuccess?: (id: string, name: string) => void,
+  onAuthSuccess?: (id: string, name: string, email: string) => void,
   userXP = 0,
   budgetSpent = 0,
   budgetTotal = 0,
@@ -887,18 +966,19 @@ function renderSection(
   flScore = 0,
   streak = 0,
   badgeCount = 0,
+  onEarnXP?: (xp: number, sectionKey: string) => void,
 ) {
   switch (id) {
     case "home":      return <HomeTab onNavigate={onNavigate} userName={userName} isLoggedIn={isLoggedIn} onAuthSuccess={onAuthSuccess ?? (() => {})} userXP={userXP} budgetSpent={budgetSpent} budgetTotal={budgetTotal} efPct={efPct} flScore={flScore} />;
-    case "budget":    return <BudgetTab isLoggedIn={isLoggedIn} onAuthSuccess={onAuthSuccess ?? (() => {})} />;
+    case "budget":    return <BudgetTab isLoggedIn={isLoggedIn} onAuthSuccess={onAuthSuccess ?? (() => {})} onEarnXP={onEarnXP} />;
     case "charlotte": return <CharlotteTab currentSection={activeSection} />;
-    case "learn":     return <LearnTab userXP={userXP} />;
+    case "learn":     return <LearnTab userXP={userXP} onEarnXP={onEarnXP} />;
     case "progress":  return <ProgressTab userXP={userXP} streak={streak} badgeCount={badgeCount} userName={userName} />;
     case "goals":     return <GoalsSection isLoggedIn={isLoggedIn} />;
     case "links":     return <LinksSection isLoggedIn={isLoggedIn} />;
 
     case "home-buying":
-      return <div><MortgageRates /><GoalSection icon="home-buying" title="Buying a Home" quizKey="home-buying"
+      return <div><MortgageRates /><GoalSection icon="home-buying" title="Buying a Home" quizKey="home-buying" onEarnXP={onEarnXP}
         intro="Buying a home is one of the biggest financial decisions you'll make. Charlotte will walk you through each step — from saving your down payment to understanding mortgage rates."
         tips={[
           "Before we talk home buying — do you have 3-6 months of emergency savings? That's the foundation everything else is built on.",
@@ -918,7 +998,7 @@ function renderSection(
       /></div>;
 
     case "credit":
-      return <GoalSection icon="credit" title="Credit & Debt" quizKey="credit"
+      return <GoalSection icon="credit" title="Credit & Debt" quizKey="credit" onEarnXP={onEarnXP}
         intro="Your credit score is a financial GPA — it determines the interest rates you pay on everything from car loans to mortgages. Charlotte can help you build and protect it."
         tips={[
           "Tell me: do you know your current credit score? (Credit Karma is free to check!)",
@@ -938,7 +1018,7 @@ function renderSection(
       />;
 
     case "investments":
-      return <div><StockTicker /><GoalSection icon="investments" title="Investments" quizKey="investments"
+      return <div><StockTicker /><GoalSection icon="investments" title="Investments" quizKey="investments" onEarnXP={onEarnXP}
         intro="Investing grows your money over time through the power of compound interest. Charlotte starts with your foundation before unlocking advanced strategies. Remember: never invest money you can't afford to lose, and this is education — not investment advice."
         tips={[
           "Important question first: do you have a 3-6 month emergency fund and no high-interest debt? That comes before investing.",
@@ -958,7 +1038,7 @@ function renderSection(
       /></div>;
 
     case "retirement":
-      return <GoalSection icon="retirement" title="Retirement" quizKey="retirement"
+      return <GoalSection icon="retirement" title="Retirement" quizKey="retirement" onEarnXP={onEarnXP}
         intro="Retirement may feel far away, but time is your biggest asset. Starting at 25 instead of 35 can mean hundreds of thousands of extra dollars — Charlotte will show you the math."
         tips={[
           "Quick check: does your employer offer a 401(k) match? If yes — are you contributing enough to get the full match?",
@@ -978,7 +1058,7 @@ function renderSection(
       />;
 
     case "education-529":
-      return <GoalSection icon="education-529" title="529 College Savings" quizKey="education-529"
+      return <GoalSection icon="education-529" title="529 College Savings" quizKey="education-529" onEarnXP={onEarnXP}
         intro="529 plans are one of the most powerful education savings tools — tax-free growth, now usable for K-12, trade schools, and even rolling into a Roth IRA under new law."
         tips={[
           "Tell me: are you saving for a child, grandchild, or yourself? The strategy changes depending on who the beneficiary is.",
@@ -997,7 +1077,7 @@ function renderSection(
       />;
 
     case "taxes-personal":
-      return <GoalSection icon="taxes-personal" title="Personal Taxes" quizKey="taxes-personal"
+      return <GoalSection icon="taxes-personal" title="Personal Taxes" quizKey="taxes-personal" onEarnXP={onEarnXP}
         intro="Taxes don't have to be scary. Charlotte breaks down exactly what you owe, what you can deduct, and — most importantly — how to keep more of your money legally."
         tips={[
           "Quick question: did you file your taxes last year? If you earned income, always file — even if you're not sure you owe. You may be owed money back!",
@@ -1017,7 +1097,7 @@ function renderSection(
       />;
 
     case "taxes-business":
-      return <GoalSection icon="taxes-business" title="Business Taxes" quizKey="budget"
+      return <GoalSection icon="taxes-business" title="Business Taxes" quizKey="taxes-personal" onEarnXP={onEarnXP}
         intro="Running a business? Your tax situation changes significantly. Charlotte helps you understand business structures, self-employment tax, quarterly payments, and how to deduct legally."
         tips={[
           "Are you freelancing, running a side hustle, or operating a full business? The answer determines your tax structure.",
@@ -1037,7 +1117,7 @@ function renderSection(
       />;
 
     case "estate-planning":
-      return <GoalSection icon="estate-planning" title="Estate Planning"
+      return <GoalSection icon="estate-planning" title="Estate Planning" quizKey="investments" onEarnXP={onEarnXP}
         intro="Estate planning isn't just for the wealthy — it's for everyone who has people they love. Charlotte guides you through the essential documents and how to protect your family."
         tips={[
           "Tell me: do you have dependents — a child, spouse, or elderly parent who relies on you financially?",
@@ -1095,21 +1175,45 @@ export default function AIMoneyMentor() {
   const mainRef = useRef<HTMLDivElement>(null);
   const supabase = createClient();
 
-  /* ── Load user data from localStorage when user changes ── */
+  /* ── Load user data from localStorage and sync from API when user changes ── */
   useEffect(() => {
     if (!user?.id) {
-      setUserXP(0); setBudgetSpent(0); setBudgetTotal(0);
+      if (typeof window !== "undefined") {
+        const gXp = Number(localStorage.getItem("aimm_guest_xp") || "0");
+        setUserXP(gXp);
+      } else {
+        setUserXP(0);
+      }
+      setBudgetSpent(0); setBudgetTotal(0);
       setEfPct(0); setFlScore(0); setStreak(0); setBadgeCount(0);
       return;
     }
     const uid = user.id;
-    setUserXP(lsGet(uid, "xp"));
+    const localXp = lsGet(uid, "xp");
+    setUserXP(localXp);
     setBudgetSpent(lsGet(uid, "budgetSpent"));
     setBudgetTotal(lsGet(uid, "budgetTotal"));
     setEfPct(lsGet(uid, "efPct"));
     setFlScore(lsGet(uid, "flScore"));
     setStreak(lsGet(uid, "streak"));
     setBadgeCount(lsGet(uid, "badges"));
+
+    // Sync from server /api/progress
+    fetch("/api/progress")
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (data?.profile?.total_xp !== undefined && data.profile.total_xp !== null) {
+          const serverXp = Math.max(localXp, Number(data.profile.total_xp));
+          setUserXP(serverXp);
+          lsSet(uid, "xp", serverXp);
+        }
+        if (data?.profile?.current_streak !== undefined && data.profile.current_streak !== null) {
+          const s = Number(data.profile.current_streak);
+          setStreak(s);
+          lsSet(uid, "streak", s);
+        }
+      })
+      .catch(err => console.error("Error fetching progress from API:", err));
   }, [user?.id]);
 
   /* ── Persist XP changes to localStorage ── */
@@ -1139,6 +1243,30 @@ export default function AIMoneyMentor() {
   useEffect(() => { mainRef.current?.scrollTo(0, 0); }, [active]);
 
   const navigate = (id: SectionId) => { setActive(id); setSidebarOpen(false); };
+
+  const handleEarnXP = async (amount: number, sectionKey: string) => {
+    setUserXP(prev => {
+      const next = prev + amount;
+      if (user?.id) lsSet(user.id, "xp", next);
+      else if (typeof window !== "undefined") localStorage.setItem("aimm_guest_xp", String(next));
+      return next;
+    });
+
+    if (user?.id) {
+      try {
+        await fetch("/api/progress", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "quiz",
+            payload: { section_key: sectionKey, correct: true, xp_earned: amount, question_idx: 0 }
+          }),
+        });
+      } catch (err) {
+        console.error("Failed to sync XP to API:", err);
+      }
+    }
+  };
 
   async function signOut() {
     if (user?.id) lsClear(user.id);
@@ -1263,17 +1391,13 @@ export default function AIMoneyMentor() {
           {NAV_GROUPS.map(group => (
             <div key={group.label}>
               <div className="sidebar-group-label">{group.label}</div>
-              {group.items.map(item => {
-                const locked = !user && item.id !== "home";
-                return (
-                  <div key={item.id} className={`sidebar-item${active === item.id ? " active" : ""}`}
-                    onClick={() => !locked && navigate(item.id)}
-                    style={{ opacity: locked ? 0.4 : 1, pointerEvents: locked ? "none" : "auto" }}>
-                    <span className="sidebar-icon"><NavIcon id={item.id} size={17} color={active === item.id ? C.goldLight : "rgba(200,217,168,0.65)"} /></span>
-                    <span>{item.label}</span>
-                  </div>
-                );
-              })}
+              {group.items.map(item => (
+                <div key={item.id} className={`sidebar-item${active === item.id ? " active" : ""}`}
+                  onClick={() => navigate(item.id)}>
+                  <span className="sidebar-icon"><NavIcon id={item.id} size={17} color={active === item.id ? C.goldLight : "rgba(200,217,168,0.65)"} /></span>
+                  <span>{item.label}</span>
+                </div>
+              ))}
             </div>
           ))}
           <div style={{ marginTop: "auto", padding: "16px", borderTop: `1px solid rgba(201,169,78,0.15)` }}>
@@ -1313,17 +1437,13 @@ export default function AIMoneyMentor() {
             {NAV_GROUPS.map(group => (
               <div key={group.label}>
                 <div className="sidebar-group-label">{group.label}</div>
-                {group.items.map(item => {
-                  const locked = !user && item.id !== "home";
-                  return (
-                    <div key={item.id} className={`sidebar-item${active === item.id ? " active" : ""}`}
-                      onClick={() => !locked && navigate(item.id)}
-                      style={{ opacity: locked ? 0.4 : 1, pointerEvents: locked ? "none" : "auto" }}>
-                      <span className="sidebar-icon"><NavIcon id={item.id} size={17} color={active === item.id ? C.goldLight : "rgba(200,217,168,0.65)"} /></span>
-                      <span>{item.label}</span>
-                    </div>
-                  );
-                })}
+                {group.items.map(item => (
+                  <div key={item.id} className={`sidebar-item${active === item.id ? " active" : ""}`}
+                    onClick={() => navigate(item.id)}>
+                    <span className="sidebar-icon"><NavIcon id={item.id} size={17} color={active === item.id ? C.goldLight : "rgba(200,217,168,0.65)"} /></span>
+                    <span>{item.label}</span>
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -1352,22 +1472,33 @@ export default function AIMoneyMentor() {
           {/* Section content */}
           <div className="content-scroll fade-in" ref={mainRef} key={active}
             style={{ display: "flex", flexDirection: "column", ...(active === "charlotte" ? { height: "calc(100vh - 110px)", overflow: "hidden" } : {}) }}>
-            {renderSection(active, navigate, active, !!user, user?.name, (id, name) => { setUser({ id, name, email: "" }); }, userXP, budgetSpent, budgetTotal, efPct, flScore, streak, badgeCount)}
+            {renderSection(
+              active,
+              navigate,
+              active,
+              !!user,
+              user?.name,
+              (id, name, email) => { setUser({ id, name, email }); },
+              userXP,
+              budgetSpent,
+              budgetTotal,
+              efPct,
+              flScore,
+              streak,
+              badgeCount,
+              handleEarnXP
+            )}
           </div>
 
           {/* Mobile bottom nav */}
           <nav className="bottom-nav-mobile">
-            {MOBILE_BOTTOM.map(item => {
-              const locked = !user && item.id !== "home";
-              return (
-                <button key={item.id} className={`bottom-nav-btn${active === item.id ? " active" : ""}`}
-                  onClick={() => !locked && navigate(item.id)}
-                  style={{ opacity: locked ? 0.4 : 1, pointerEvents: locked ? "none" : "auto" }}>
-                  <span className="bottom-nav-icon"><NavIcon id={item.id} size={22} color={active === item.id ? C.goldLight : C.sageMid} /></span>
-                  <span className="bottom-nav-label">{item.short}</span>
-                </button>
-              );
-            })}
+            {MOBILE_BOTTOM.map(item => (
+              <button key={item.id} className={`bottom-nav-btn${active === item.id ? " active" : ""}`}
+                onClick={() => navigate(item.id)}>
+                <span className="bottom-nav-icon"><NavIcon id={item.id} size={22} color={active === item.id ? C.goldLight : C.sageMid} /></span>
+                <span className="bottom-nav-label">{item.short}</span>
+              </button>
+            ))}
             <button className={`bottom-nav-btn${NAV_GROUPS[1].items.some(i => i.id === active) ? " active" : ""}`} onClick={() => setSidebarOpen(true)}>
               <span className="bottom-nav-icon"><NavIcon id="more" size={22} color={NAV_GROUPS[1].items.some(i => i.id === active) ? C.goldLight : C.sageMid} /></span>
               <span className="bottom-nav-label">More</span>
@@ -1379,7 +1510,7 @@ export default function AIMoneyMentor() {
       {showAuth && (
         <AuthModal
           onClose={() => setShowAuth(false)}
-          onSuccess={(id, name) => { setUser({ id, name, email: "" }); setShowAuth(false); }}
+          onSuccess={(id, name, email) => { setUser({ id, name, email }); setShowAuth(false); }}
         />
       )}
     </>

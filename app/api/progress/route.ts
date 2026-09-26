@@ -34,14 +34,16 @@ export async function POST(req: NextRequest) {
 
     // Add XP to profile if correct
     if (correct && xp_earned > 0) {
-      await supabase.rpc("increment_xp", { uid: user.id, amount: xp_earned }).maybeSingle();
+      const { error: rpcErr } = await supabase.rpc("increment_xp", { uid: user.id, amount: xp_earned });
 
-      // Fallback manual update if RPC not set up yet
-      const { data: profile } = await supabase.from("profiles").select("total_xp").eq("id", user.id).single();
-      if (profile) {
-        const newXp = (profile.total_xp ?? 0) + xp_earned;
-        const newLevel = newXp >= 4000 ? 6 : newXp >= 2000 ? 5 : newXp >= 1000 ? 4 : newXp >= 500 ? 3 : newXp >= 200 ? 2 : 1;
-        await supabase.from("profiles").update({ total_xp: newXp, current_level: newLevel, last_active: new Date().toISOString().split("T")[0] }).eq("id", user.id);
+      // Fallback manual update only if RPC failed or does not exist
+      if (rpcErr) {
+        const { data: profile } = await supabase.from("profiles").select("total_xp").eq("id", user.id).single();
+        if (profile) {
+          const newXp = (profile.total_xp ?? 0) + xp_earned;
+          const newLevel = newXp >= 4000 ? 6 : newXp >= 2000 ? 5 : newXp >= 1000 ? 4 : newXp >= 500 ? 3 : newXp >= 200 ? 2 : 1;
+          await supabase.from("profiles").update({ total_xp: newXp, current_level: newLevel, last_active: new Date().toISOString().split("T")[0] }).eq("id", user.id);
+        }
       }
     }
 

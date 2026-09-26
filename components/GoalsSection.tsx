@@ -299,8 +299,21 @@ export default function GoalsSection({ isLoggedIn }: { isLoggedIn: boolean }) {
   const supabase = createClient();
 
   useEffect(() => {
-    if (isLoggedIn) loadGoals();
+    if (isLoggedIn) {
+      loadGoals();
+    } else {
+      try {
+        const local = localStorage.getItem("aimm_guest_goals");
+        if (local) setGoals(JSON.parse(local));
+      } catch { /* ignore parse error */ }
+    }
   }, [isLoggedIn]);
+
+  function persistGuestGoals(updated: Goal[]) {
+    try {
+      localStorage.setItem("aimm_guest_goals", JSON.stringify(updated));
+    } catch { /* ignore storage error */ }
+  }
 
   async function loadGoals() {
     setLoading(true);
@@ -314,7 +327,10 @@ export default function GoalsSection({ isLoggedIn }: { isLoggedIn: boolean }) {
       const res = await fetch("/api/goals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(g) });
       if (res.ok) { const d = await res.json(); setGoals(prev => [d.goal, ...prev]); }
     } else {
-      setGoals(prev => [{ ...g, id: `local-${Date.now()}` }, ...prev]);
+      const newGoal: Goal = { ...g, id: `local-${Date.now()}` };
+      const updated = [newGoal, ...goals];
+      setGoals(updated);
+      persistGuestGoals(updated);
     }
     setShowForm(false);
   }
@@ -327,7 +343,9 @@ export default function GoalsSection({ isLoggedIn }: { isLoggedIn: boolean }) {
       const res = await fetch("/api/goals", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, current_amount: newAmount, is_completed: newAmount >= goal.target_amount }) });
       if (res.ok) setGoals(prev => prev.map(g => g.id === id ? { ...g, current_amount: newAmount } : g));
     } else {
-      setGoals(prev => prev.map(g => g.id === id ? { ...g, current_amount: newAmount } : g));
+      const updated = goals.map(g => g.id === id ? { ...g, current_amount: newAmount } : g);
+      setGoals(updated);
+      persistGuestGoals(updated);
     }
   }
 
@@ -335,7 +353,9 @@ export default function GoalsSection({ isLoggedIn }: { isLoggedIn: boolean }) {
     if (isLoggedIn) {
       await fetch("/api/goals", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
     }
-    setGoals(prev => prev.filter(g => g.id !== id));
+    const updated = goals.filter(g => g.id !== id);
+    setGoals(updated);
+    if (!isLoggedIn) persistGuestGoals(updated);
   }
 
   const totalSaved = goals.reduce((s, g) => s + g.current_amount, 0);

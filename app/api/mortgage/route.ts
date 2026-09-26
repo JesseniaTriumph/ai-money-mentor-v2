@@ -9,10 +9,18 @@ let cache: { rate30: string; rate15: string; asOf: string; ts: number } | null =
 const TTL = 60 * 60 * 1000; // 1 hour (data only updates weekly)
 
 function parseLatestRate(csv: string): { rate: string; date: string } {
-  const lines = csv.trim().split("\n");
-  // Last non-empty line has latest data
-  const last = lines[lines.length - 1].split(",");
-  return { date: last[0], rate: last[1] };
+  const lines = csv.replace(/\r/g, "").trim().split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const parts = lines[i].split(",");
+    if (parts.length >= 2) {
+      const date = parts[0]?.trim();
+      const rate = parts[1]?.trim();
+      if (date && rate && rate !== "." && !isNaN(Number(rate))) {
+        return { date, rate };
+      }
+    }
+  }
+  return { date: "Recent", rate: "6.50" };
 }
 
 export async function GET() {

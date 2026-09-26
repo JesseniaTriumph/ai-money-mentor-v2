@@ -7,7 +7,7 @@ const C = { forest: "#1a5c35", forestDeep: "#0e3d22", gold: "#c9a94e", goldLight
 
 const inputStyle: React.CSSProperties = { width: "100%", padding: "12px 14px", background: "#f5faf0", border: `1px solid ${C.border}`, borderRadius: 11, fontSize: 14, fontFamily: "DM Sans, sans-serif", color: C.text, outline: "none", boxSizing: "border-box" };
 
-export default function AuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (id: string, name: string) => void }) {
+export default function AuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (id: string, name: string, email: string) => void }) {
   const [mode, setMode] = useState<"signin" | "signup" | "magic">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -32,13 +32,13 @@ export default function AuthModal({ onClose, onSuccess }: { onClose: () => void;
     if (mode === "signup") {
       const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
       if (error) { setError(error.message); setLoading(false); return; }
-      if (data.user) { onSuccess(data.user.id, name || email.split("@")[0]); onClose(); }
+      if (data.user) { onSuccess(data.user.id, name || email.split("@")[0], data.user.email ?? email); onClose(); }
       else setMessage("Check your email to confirm your account.");
     } else {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) { setError(error.message); setLoading(false); return; }
       const displayName = data.user?.user_metadata?.full_name || data.user?.email?.split("@")[0] || "there";
-      onSuccess(data.user?.id ?? "", displayName);
+      onSuccess(data.user?.id ?? "", displayName, data.user?.email ?? email);
       onClose();
     }
     setLoading(false);

@@ -42,9 +42,16 @@ async function fetchQuote(symbol: string, label: string): Promise<QuoteData | nu
   };
 }
 
+const FALLBACK_QUOTES: QuoteData[] = [
+  { symbol: "SPY", label: "S&P 500 ETF", price: "575.20", change: "+4.10", changePercent: "+0.72%", isPositive: true },
+  { symbol: "VOO", label: "Vanguard S&P 500", price: "528.45", change: "+3.75", changePercent: "+0.71%", isPositive: true },
+  { symbol: "VTI", label: "Total Market", price: "282.10", change: "+1.90", changePercent: "+0.68%", isPositive: true },
+  { symbol: "QQQ", label: "Nasdaq-100", price: "492.30", change: "+5.40", changePercent: "+1.11%", isPositive: true },
+];
+
 export async function GET() {
   if (!ALPHA_KEY) {
-    return NextResponse.json({ error: "Alpha Vantage key not configured" }, { status: 500 });
+    return NextResponse.json({ quotes: FALLBACK_QUOTES, cached: false, ts: Date.now(), isFallback: true });
   }
 
   if (cache && Date.now() - cache.ts < TTL) {
@@ -54,9 +61,12 @@ export async function GET() {
   try {
     const results = await Promise.all(SYMBOLS.map(s => fetchQuote(s.symbol, s.label)));
     const quotes = results.filter(Boolean) as QuoteData[];
+    if (quotes.length === 0) {
+      return NextResponse.json({ quotes: FALLBACK_QUOTES, cached: false, ts: Date.now(), isFallback: true });
+    }
     cache = { data: quotes, ts: Date.now() };
     return NextResponse.json({ quotes, cached: false, ts: cache.ts });
   } catch {
-    return NextResponse.json({ error: "Failed to fetch market data" }, { status: 500 });
+    return NextResponse.json({ quotes: FALLBACK_QUOTES, cached: false, ts: Date.now(), isFallback: true });
   }
 }

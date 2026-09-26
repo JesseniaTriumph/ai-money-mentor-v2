@@ -67,7 +67,22 @@ export default function LinksSection({ isLoggedIn }: { isLoggedIn: boolean }) {
   const [newCat, setNewCat] = useState("other");
   const [newNotes, setNewNotes] = useState("");
 
-  useEffect(() => { if (isLoggedIn) loadLinks(); }, [isLoggedIn]);
+  useEffect(() => {
+    if (isLoggedIn) {
+      loadLinks();
+    } else {
+      try {
+        const local = localStorage.getItem("aimm_guest_links");
+        if (local) setMyLinks(JSON.parse(local));
+      } catch { /* ignore parse error */ }
+    }
+  }, [isLoggedIn]);
+
+  function persistGuestLinks(updated: Link[]) {
+    try {
+      localStorage.setItem("aimm_guest_links", JSON.stringify(updated));
+    } catch { /* ignore storage error */ }
+  }
 
   async function loadLinks() {
     const res = await fetch("/api/links");
@@ -81,18 +96,25 @@ export default function LinksSection({ isLoggedIn }: { isLoggedIn: boolean }) {
       const res = await fetch("/api/links", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(link) });
       if (res.ok) { const d = await res.json(); setMyLinks(prev => [d.link, ...prev]); }
     } else {
-      setMyLinks(prev => [{ ...link, id: `local-${Date.now()}` }, ...prev]);
+      const newLink: Link = { ...link, id: `local-${Date.now()}` };
+      const updated = [newLink, ...myLinks];
+      setMyLinks(updated);
+      persistGuestLinks(updated);
     }
     setNewTitle(""); setNewUrl(""); setNewNotes(""); setShowForm(false);
   }
 
   async function deleteLink(id: string) {
     if (isLoggedIn) await fetch("/api/links", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
-    setMyLinks(prev => prev.filter(l => l.id !== id));
+    const updated = myLinks.filter(l => l.id !== id);
+    setMyLinks(updated);
+    if (!isLoggedIn) persistGuestLinks(updated);
   }
 
   function toggleFavorite(id: string) {
-    setMyLinks(prev => prev.map(l => l.id === id ? { ...l, is_favorite: !l.is_favorite } : l));
+    const updated = myLinks.map(l => l.id === id ? { ...l, is_favorite: !l.is_favorite } : l);
+    setMyLinks(updated);
+    if (!isLoggedIn) persistGuestLinks(updated);
   }
 
   const charlottePicks = filterCat === "all" ? CHARLOTTE_PICKS : CHARLOTTE_PICKS.filter(l => l.category === filterCat);
